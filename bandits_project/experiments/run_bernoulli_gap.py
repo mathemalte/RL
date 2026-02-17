@@ -1,5 +1,5 @@
 from bandits_project.bandits.stochastic_bandit import StochasticBandit, StochasticBanditConfig
-
+#wow hat der das schön gemacht
 def main():
     cfg = StochasticBanditConfig(
         n_arms=5,
