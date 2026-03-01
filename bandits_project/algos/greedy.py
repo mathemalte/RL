@@ -7,12 +7,12 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
 
-PullFn = Callable[[int], float]
+PullFn = Callable[[int], float] # function that takes arm index and returns reward (stochastic bandit environment)
 EpsSchedule = Callable[[int], float]  # input: t (1-based), output: epsilon_t in [0,1]
 
 
 def _random_argmax(values: np.ndarray, rng: np.random.Generator) -> int:
-    """Argmax with uniform tie-breaking."""
+    """Argmax with uniform tie-breaking.""" # if multiple arms have the same max value, choose among them uniformly at random
     m = np.max(values)
     candidates = np.flatnonzero(values == m)
     return int(rng.choice(candidates))
@@ -25,8 +25,8 @@ def _update_running_mean(q_hat: np.ndarray, counts: np.ndarray, a: int, x: float
     See lecture equation (1.3).  [oai_citation:4‡RL_Vorlesung.pdf](sediment://file_000000000a6c720aa8941aeeb29732ab)
     """
     counts[a] += 1
-    n = counts[a]
-    q_hat[a] = q_hat[a] + (x - q_hat[a]) / n
+    n = counts[a] #zählt wie oft arm a schon gespielt wurde
+    q_hat[a] = q_hat[a] + (x - q_hat[a]) / n #q_hat ist die aktuelle schätzung des mittelwerts von arm a
 
 
 @dataclass(frozen=True)
@@ -40,14 +40,14 @@ class DecreasingEpsilonByBound:
     - You must provide K, C, d (with d < min gap, as in the theorem statement).
     """
     K: int
-    C: float
-    d: float
+    C: float #constant
+    d: float #gap parameter
 
-    def __call__(self, t: int) -> float:
+    def __call__(self, t: int) -> float: #macht aus der Formel eine funktion die man benutzen kann
         if t <= 0:
             raise ValueError("t must be >= 1 (1-based).")
         eps = (self.C * self.K) / (self.d * self.d * t)
-        return float(min(1.0, max(0.0, eps)))
+        return float(min(1.0, max(0.0, eps))) #epsilon_t muss in [0,1] liegen
 
 
 def run_pure_greedy(
@@ -77,12 +77,12 @@ def run_pure_greedy(
     rewards = np.zeros(n_steps, dtype=float)
 
     for t in range(1, n_steps + 1):
-        a = _random_argmax(q_hat, rng)
-        x = float(pull(a))
+        a = _random_argmax(q_hat, rng) #wähle den arm mit dem höchsten geschätzten Mittelwert, bei Gleichstand zufällig
+        x = float(pull(a)) #hole den reward für den gezogenen arm a
 
         actions[t - 1] = a
         rewards[t - 1] = x
-        _update_running_mean(q_hat, counts, a, x)
+        _update_running_mean(q_hat, counts, a, x) #aktualisiere die Schätzung des Mittelwerts für arm a basierend auf dem neuen reward x
 
     return {"actions": actions, "rewards": rewards, "q_hat": q_hat, "counts": counts}
 
@@ -119,8 +119,8 @@ def run_epsilon_greedy(
     rewards = np.zeros(n_steps, dtype=float)
 
     for t in range(1, n_steps + 1):
-        u = rng.random()
-        if u < epsilon:
+        u = rng.random() #ziehe u aus uniform(0,1)
+        if u < epsilon: #dann wähle einen arm uniform zufällig
             a = int(rng.integers(low=0, high=K))  # uniform exploration
         else:
             a = _random_argmax(q_hat, rng)        # greedy exploitation
