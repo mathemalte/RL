@@ -1,4 +1,4 @@
-# bandits_project/algorithms/etc.py
+# bandits_project/algos/etc.py
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 @dataclass(frozen=True)
 class ETCConfig:
     exploration_rounds: int                 # total exploration steps T_explore
-    seed: Optional[int] = None              # for tie-breaking/random arm choice
+    seed: Optional[int] = None              # for tie-breaking/random arm choice have same means
 
 
 class ETC:
@@ -43,12 +43,12 @@ class ETC:
         # internal state
         self.t = 0  # number of steps played so far
 
-        # statistics
-        self.counts = np.zeros(self.n_arms, dtype=int)
-        self.sums = np.zeros(self.n_arms, dtype=float)
+        # statistics for empirical means (compute on the fly or keep running sums[i]/counts[i])
+        self.counts = np.zeros(self.n_arms, dtype=int) #how often arm i was played
+        self.sums = np.zeros(self.n_arms, dtype=float) #sum of rewards observed from arm i
 
         # commit state
-        self._committed_arm: Optional[int] = None
+        self._committed_arm: Optional[int] = None # once we enter commit phase, this is the arm we always pull; None if not yet committed
 
     def _empirical_means(self) -> np.ndarray:
         means = np.zeros(self.n_arms, dtype=float)
@@ -59,9 +59,9 @@ class ETC:
     def _pick_best_arm(self) -> int:
         means = self._empirical_means()
         best_val = np.max(means)
-        best_arms = np.flatnonzero(means == best_val)
+        best_arms = np.flatnonzero(means == best_val) #finds all arms with the same best empirical mean (could be more than 1 due to ties)
         # tie-break randomly (or deterministically if you set a seed)
-        return int(self.rng.choice(best_arms))
+        return int(self.rng.choice(best_arms)) # randomly pick one of the best arms if there are ties
 
     def step(self) -> Tuple[int, float]:
         """
@@ -70,7 +70,7 @@ class ETC:
         """
         # Decide arm
         if self.t < self.cfg.exploration_rounds:
-            # round-robin exploration
+            # round-robin exploration phase: just cycle through arms in order
             arm = self.t % self.n_arms
         else:
             # commit phase

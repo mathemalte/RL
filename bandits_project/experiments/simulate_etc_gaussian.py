@@ -1,3 +1,7 @@
+# This file simulates ETC on Gaussian bandits and compares different choices of m (exploration pulls per arm).
+# It includes the theory m* from Theorem 1.3.2 bound as one of the options.
+# It logs and plots cumulative regret, correct action rate, mean estimates, and action probabilities over time for each m choice.
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,7 +15,7 @@ from bandits_project.algos.etc_bound import optimal_m_by_bound
 
 
 @dataclass
-class OnlineMoments:
+class OnlineMoments: #object to track the mean and variance over many runs
     """Welford online mean/variance for arrays of fixed shape."""
     n: int
     mean: np.ndarray
@@ -21,7 +25,7 @@ class OnlineMoments:
     def create(shape: Tuple[int, ...], dtype=float) -> "OnlineMoments":
         return OnlineMoments(n=0, mean=np.zeros(shape, dtype=dtype), m2=np.zeros(shape, dtype=dtype))
 
-    def update(self, x: np.ndarray) -> None:
+    def update(self, x: np.ndarray) -> None: #welford method for online mean/variance
         x = np.asarray(x, dtype=float)
         self.n += 1
         delta = x - self.mean
@@ -56,7 +60,7 @@ def run_one_etc_gaussian(
             n_arms=K,
             dist="gaussian",
             mean_mode="random",
-            seed=int(rng.integers(0, 2**31 - 1)),
+            seed=int(rng.integers(0, 2**31 - 1)), #seed creates other random means, rewards and decisions but is same across different m values for fair comparison
         )
     )
 
@@ -65,7 +69,7 @@ def run_one_etc_gaussian(
     mu_star = float(np.max(true_means))
     deltas = mu_star - true_means  # Δ_a
 
-    # choose m
+    # choose m (m_used is exploration pulls per arm; total exploration is m_used*K)
     if m_per_arm is None:
         m_used = int(optimal_m_by_bound(deltas, n=n_steps, K=K, sigma=sigma))
     else:
@@ -91,6 +95,7 @@ def run_one_etc_gaussian(
     sums = np.zeros(K, dtype=float)
 
     reg = 0.0
+    #Mainloop
     for t in range(n_steps):
         arm, reward = etc.step()
         arm = int(arm)
@@ -103,7 +108,7 @@ def run_one_etc_gaussian(
         played = counts > 0
         hat[played] = sums[played] / counts[played]
 
-        reg += mu_star - float(true_means[arm])
+        reg += mu_star - float(true_means[arm]) #regret is expected instantaneaous regret = mu* - mu_arm, cumulative regret is sum of that over time
         cum_regret[t] = reg
         correct[t] = 1.0 if arm == best_arm else 0.0
         est_means[t] = hat
@@ -127,7 +132,7 @@ def label_for_m(m: MType) -> str:
     return "theory m*" if m is None else f"m={m}"
 
 
-def evaluate_m_grid(
+def evaluate_m_grid( #test for many m values and aggregate results
     K: int,
     n_steps: int,
     N: int,
@@ -156,7 +161,7 @@ def evaluate_m_grid(
             if progress_every and (r % progress_every == 0):
                 print(f"[{lbl}] run {r}/{N}")
 
-            seed = base_seed + 100000 * mi + r
+            seed = base_seed + 100000 * mi + r # every run has a unique seed, but same m has same seeds across runs for fair comparison
             out = run_one_etc_gaussian(K=K, n_steps=n_steps, m_per_arm=m, seed=seed, sigma=sigma)
 
             mom_regret.update(out["cum_regret"])
@@ -166,7 +171,7 @@ def evaluate_m_grid(
             mom_true_means.update(out["true_means"])
             mom_m_used.update(out["m_used"])
 
-        results[lbl] = {
+        results[lbl] = { #per m one resultblock with all metrics
             "regret_mean": mom_regret.mean,
             "regret_var": mom_regret.variance(),
             "correct_mean": mom_correct.mean,
@@ -281,3 +286,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+    #zusammenfassend: für jedes m mit den verschiedenen werten spielt es 1000 mal den gaussian banditen
+    #ein run erzeugt neuen gaussian banditen mit neuen means, berechnet bestes mean und wählt m oder über bound. das läuft dann 1000 mal. speichert das alles und wertet es für alle verschiedenen m aus.
+    
