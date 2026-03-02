@@ -265,7 +265,7 @@ def boxplot_estimates(true_means: np.ndarray, est_means_by_algo: Dict[str, np.nd
             data.append(est[:, a])
 
     plt.figure(figsize=(max(12, 0.35 * len(labels)), 6))
-    plt.boxplot(data, showfliers=False)
+    plt.boxplot(data, showfliers=True, whis=(0, 100))
     plt.xticks(np.arange(1, len(labels) + 1), labels, rotation=90)
     plt.ylabel("Mean / estimate")
     plt.title("True arm means vs algorithm estimates (end of horizon)")
@@ -287,7 +287,7 @@ def boxplot_probs(prob_by_algo: Dict[str, np.ndarray], outpath: str) -> None:
             data.append(probs[:, a])
 
     plt.figure(figsize=(max(12, 0.35 * len(labels)), 6))
-    plt.boxplot(data, showfliers=False)
+    plt.boxplot(data, showfliers=True, whis=(0, 100))
     plt.xticks(np.arange(1, len(labels) + 1), labels, rotation=90)
     plt.ylabel("Empirical play probability")
     plt.title("Play probabilities per arm (empirical, end of horizon)")
@@ -300,7 +300,7 @@ def boxplot_final_regrets(final_regrets: Dict[str, np.ndarray], outpath: str) ->
     labels = list(final_regrets.keys())
     data = [final_regrets[k] for k in labels]
     plt.figure(figsize=(max(10, 0.6 * len(labels)), 6))
-    plt.boxplot(data, labels=labels, showfliers=False)
+    plt.boxplot(data, labels=labels, showfliers=True, whis=(0, 100))
     plt.ylabel("Final cumulative pseudo-regret")
     plt.title("Final regrets at horizon n")
     plt.xticks(rotation=30, ha="right")
