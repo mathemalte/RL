@@ -360,14 +360,14 @@ def run_single_instance(
 # -----------------------------
 # Main experiment
 # -----------------------------
-def main():
+def run_experiment(prefix: str, do_tune: bool) -> None:
     K = 5
     n_steps = 10_000
     N = 1_000
-
     master_seed = 123
+    rng = np.random.default_rng(master_seed)
 
-    algos: List[Tuple[str, Dict]] = [
+    algos = [
         ("greedy", {}),
         ("eps_fixed", {"epsilon": 0.1}),
         ("eps_decay", {"C": 2.0, "d": 0.05}),
@@ -381,8 +381,7 @@ def main():
         ("pg_with_baseline", {"alpha0": 0.2}),
     ]
 
-    # ----- OPTIONAL tuning -----
-    do_tune = True
+    # ---------- TUNING ----------
     if do_tune:
         n_tune = 2_000
         N_tune = 50
@@ -394,180 +393,46 @@ def main():
         )
         algos = [(n, (best if n == "eps_fixed" else p)) for (n, p) in algos]
 
-        best_theta = tune_grid(
-            "boltz_softmax",
-            [{"theta": th} for th in [0.5, 1.0, 2.0, 4.0, 8.0]],
-            K, n_tune, N_tune, seed=master_seed + 2
-        )
-        algos = [(n, (best_theta if n == "boltz_softmax" else p)) for (n, p) in algos]
-
-        best_theta2 = tune_grid(
-            "boltz_gumbel",
-            [{"theta": th} for th in [0.5, 1.0, 2.0, 4.0, 8.0]],
-            K, n_tune, N_tune, seed=master_seed + 3
-        )
-        algos = [(n, (best_theta2 if n == "boltz_gumbel" else p)) for (n, p) in algos]
-
-        best_scale = tune_grid(
-            "boltz_noise_cauchy",
-            [{"base_scale": s} for s in [0.05, 0.1, 0.2, 0.4]],
-            K, n_tune, N_tune, seed=master_seed + 4
-        )
-        algos = [(n, (best_scale if n == "boltz_noise_cauchy" else p)) for (n, p) in algos]
-
-        best_C = tune_grid(
-            "gumbel_ucb_style",
-            [{"C": c} for c in [0.5, 1.0, 2.0, 4.0]],
-            K, n_tune, N_tune, seed=master_seed + 5
-        )
-        algos = [(n, (best_C if n == "gumbel_ucb_style" else p)) for (n, p) in algos]
-
-        best_alpha = tune_grid(
-            "pg_no_baseline",
-            [{"alpha0": a} for a in [0.05, 0.1, 0.2, 0.4]],
-            K, n_tune, N_tune, seed=master_seed + 6
-        )
-        algos = [(n, (best_alpha if n == "pg_no_baseline" else p)) for (n, p) in algos]
-
-        best_alpha2 = tune_grid(
-            "pg_with_baseline",
-            [{"alpha0": a} for a in [0.05, 0.1, 0.2, 0.4]],
-            K, n_tune, N_tune, seed=master_seed + 7
-        )
-        algos = [(n, (best_alpha2 if n == "pg_with_baseline" else p)) for (n, p) in algos]
-
     algo_names = [n for (n, _) in algos]
 
-    # ----- accumulators -----
     regret_stats: Dict[str, OnlineCurveStats] = {name: OnlineCurveStats(n_steps) for name in algo_names}
     popt_stats: Dict[str, OnlineCurveStats] = {name: OnlineCurveStats(n_steps) for name in algo_names}
-
     final_regrets: Dict[str, np.ndarray] = {name: np.zeros(N, dtype=float) for name in algo_names}
     play_prob_opt_all: Dict[str, np.ndarray] = {name: np.zeros(N, dtype=float) for name in algo_names}
 
-    true_means_all = np.zeros((N, K), dtype=float)
-    est_means_all: Dict[str, np.ndarray] = {name: np.zeros((N, K), dtype=float) for name in algo_names}
-
-    # ----- parallel run -----
-    n_jobs = min(10, os.cpu_count() or 10)
-    results = Parallel(n_jobs=n_jobs, prefer="processes")(
-        delayed(run_single_instance)(i, K, n_steps, algos, master_seed) for i in range(N)
-    )
-
-    # ----- aggregate -----
-    for i, (means, reg_curves_i, final_regrets_i, est_means_i, play_prob_opt_i) in enumerate(results):
-        true_means_all[i] = means
-
-        # for popt curve we need opt arm of this instance
-        opt_arm = int(np.argmax(means))
-
-        for algo_name in algo_names:
-            reg_curve = reg_curves_i[algo_name]
-            regret_stats[algo_name].update(reg_curve)
-            final_regrets[algo_name][i] = final_regrets_i[algo_name]
-            est_means_all[algo_name][i] = est_means_i[algo_name]
-            play_prob_opt_all[algo_name][i] = play_prob_opt_i[algo_name]
-
-            # P(A_t = a*) over time for this instance:
-            # (actions aren't returned; reconstruct from curve alone isn't possible)
-            # Therefore compute popt curve from stored probability at horizon isn't possible here.
-            # --- Fix: compute popt curve inside run_single_instance? ---
-            # We do that below by recomputing it from reg_curves? Not possible.
-            # So we store popt curve in run_single_instance. (Implemented by small change below.)
-            # Placeholder here; actual popt update happens after the code block below.
-
-    # ----- Re-run parallel with popt curves stored (small addition) -----
-    # To keep code simple and correct: we repeat results computation with popt curves included.
-    # (If you want, we can refactor to avoid the duplicate run; but this keeps it explicit.)
-    results2 = Parallel(n_jobs=n_jobs, prefer="processes")(
-        delayed(run_single_instance_with_popt)(i, K, n_steps, algos, master_seed) for i in range(N)
-    )
-
-    # reset accumulators (since we recompute fully with popt)
-    regret_stats = {name: OnlineCurveStats(n_steps) for name in algo_names}
-    popt_stats = {name: OnlineCurveStats(n_steps) for name in algo_names}
-
-    final_regrets = {name: np.zeros(N, dtype=float) for name in algo_names}
-    play_prob_opt_all = {name: np.zeros(N, dtype=float) for name in algo_names}
-    true_means_all = np.zeros((N, K), dtype=float)
-    est_means_all = {name: np.zeros((N, K), dtype=float) for name in algo_names}
-
-    for i, (means, reg_curves_i, popt_curves_i, final_regrets_i, est_means_i, play_prob_opt_i) in enumerate(results2):
-        true_means_all[i] = means
-        for algo_name in algo_names:
-            regret_stats[algo_name].update(reg_curves_i[algo_name])
-            popt_stats[algo_name].update(popt_curves_i[algo_name])
-            final_regrets[algo_name][i] = final_regrets_i[algo_name]
-            est_means_all[algo_name][i] = est_means_i[algo_name]
-            play_prob_opt_all[algo_name][i] = play_prob_opt_i[algo_name]
-
-    # ----- plots -----
-    plot_regret_curves(regret_stats, n_steps, N, outpath="ex4_regret_curves.png")
-    plot_popt_curves(popt_stats, n_steps, N, outpath="ex4_popt_curves.png")
-    boxplot_estimates(true_means_all, est_means_all, outpath="ex4_box_estimates.png")
-    boxplot_prob_opt(play_prob_opt_all, outpath="ex4_box_prob_opt.png")
-    boxplot_final_regrets(final_regrets, outpath="ex4_box_final_regrets.png")
-
-    print("\nSaved figures:")
-    print("  ex4_regret_curves.png")
-    print("  ex4_popt_curves.png")
-    print("  ex4_box_estimates.png")
-    print("  ex4_box_prob_opt.png")
-    print("  ex4_box_final_regrets.png")
-
-
-# ---- helper with popt curves stored (used by main) ----
-def run_single_instance_with_popt(
-    i: int,
-    K: int,
-    n_steps: int,
-    algos: List[Tuple[str, Dict]],
-    master_seed: int,
-) -> Tuple[np.ndarray, Dict[str, np.ndarray], Dict[str, np.ndarray], Dict[str, float], Dict[str, np.ndarray], Dict[str, float]]:
-    rng_i = np.random.default_rng(master_seed + 10_000 * i)
-
-    means = sample_random_means(K, rng_i)
-    opt_arm = int(np.argmax(means))
-
-    mu_star = float(np.max(means))
-    gaps = mu_star - means
-    positive_gaps = gaps[gaps > 0]
-    realized_min_gap = float(np.min(positive_gaps)) if positive_gaps.size > 0 else 1.0
-    d_model = 0.5 * realized_min_gap
-
-    reg_curves_i: Dict[str, np.ndarray] = {}
-    popt_curves_i: Dict[str, np.ndarray] = {}
-    final_regrets_i: Dict[str, float] = {}
-    est_means_i: Dict[str, np.ndarray] = {}
-    play_prob_opt_i: Dict[str, float] = {}
-
     t = np.arange(1, n_steps + 1)
 
-    for algo_name, params in algos:
-        params_run = dict(params)
-        if algo_name == "eps_decay":
-            params_run["d"] = d_model
+    for i in range(N):
+        means = sample_random_means(K, rng)
+        opt_arm = int(np.argmax(means))
 
-        bandit_rng = np.random.default_rng(int(rng_i.integers(0, 2**32 - 1)))
-        bandit = BernoulliBandit(means=means, rng=bandit_rng)
+        for algo_name, params in algos:
+            bandit_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
+            bandit = BernoulliBandit(means=means, rng=bandit_rng)
 
-        seed_run = int(rng_i.integers(0, 2**32 - 1))
-        actions, rewards, _extra = run_one_algo(algo_name, bandit, n_steps, params_run, seed=seed_run)
+            seed_run = int(rng.integers(0, 2**32 - 1))
+            actions, rewards, _extra = run_one_algo(algo_name, bandit, n_steps, params, seed=seed_run)
 
-        reg_curve = cumulative_pseudo_regret(means, actions)
-        reg_curves_i[algo_name] = reg_curve
-        final_regrets_i[algo_name] = float(reg_curve[-1])
+            reg_curve = cumulative_pseudo_regret(means, actions)
+            regret_stats[algo_name].update(reg_curve)
+            final_regrets[algo_name][i] = reg_curve[-1]
 
-        # P(A_t = a*) over time
-        popt_curve = np.cumsum(actions == opt_arm) / t
-        popt_curves_i[algo_name] = popt_curve
+            popt_curve = np.cumsum(actions == opt_arm) / t
+            popt_stats[algo_name].update(popt_curve)
 
-        counts, est = empirical_arm_stats(K, actions, rewards)
-        est_means_i[algo_name] = est
-        play_prob_opt_i[algo_name] = float(counts[opt_arm] / n_steps)
+            counts, _ = empirical_arm_stats(K, actions, rewards)
+            play_prob_opt_all[algo_name][i] = counts[opt_arm] / n_steps
 
-    return means, reg_curves_i, popt_curves_i, final_regrets_i, est_means_i, play_prob_opt_i
+        if (i + 1) % 50 == 0:
+            print(f"[{prefix}] {i+1}/{N}")
 
+    plot_regret_curves(regret_stats, n_steps, N, outpath=f"{prefix}_ex4_regret_curves.png")
+    plot_popt_curves(popt_stats, n_steps, N, outpath=f"{prefix}_ex4_popt_curves.png")
+    boxplot_prob_opt(play_prob_opt_all, outpath=f"{prefix}_ex4_box_prob_opt.png")
+    boxplot_final_regrets(final_regrets, outpath=f"{prefix}_ex4_box_final_regrets.png")
+
+    print(f"\nFinished run: {prefix}")
 
 if __name__ == "__main__":
-    main()
+    run_experiment(prefix="notuned", do_tune=False)
+    run_experiment(prefix="tuned", do_tune=True)
